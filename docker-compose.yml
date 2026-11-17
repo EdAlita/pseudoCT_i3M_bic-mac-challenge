@@ -1,0 +1,23 @@
+services:
+  pseudo-ct:
+    image: eulinbriseno/bicmac-inference:dryrun-v1
+    container_name: pseudo_ct_inference
+ 
+    network_mode: none
+    mem_limit: 128g
+ 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+ 
+    environment:
+      DEVICE: "cuda"
+ 
+    volumes:
+      - ./val/sub-004/features:/data/features:ro
+      - ./val_output/sub-004:/data/output
+
