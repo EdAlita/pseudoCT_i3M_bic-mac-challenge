@@ -1,0 +1,111 @@
+# Fase B3, ronda 4 (v23): v21 + augmentations de la tarea 2, warm start desde v21 (mismo fold k).
+# v22 (escala pediátrica + EMA) no mejoró a v21, ni en los menores de 13 años: se descartan.
+#   - Augmentation de dominio del NAC-PET en BigMAC (centro oscuro + halo de scatter, medidos).
+#   - Flip izquierda-derecha (v18-v22 volteaban cabeza-pies).
+#   - Losa pulmonar contigua para el muestreo de tórax (sin gas intestinal).
+# Ronda 2 (v21): como v20, más muestreo dirigido y más LR (decisión tras B4 de v20:
+# v20 aprendió que hay aire pero lo colocaba mal y empeoró en los menores de 13 años).
+# Fine-tuning pediátrico desde v18 (mismo fold k).
+# Los folds rotan sobre utrecht_hdf5 (val = Utrecht fold k); BigMAC entra SOLO en train
+# con --extra_train_dir, al 30 % de los parches. Siempre sin MRI ni topograma (Utrecht no
+# los tiene). B2b mostró que el problema es el dominio del NAC-PET, no las coordenadas:
+# el encoder de PET se entrena (LR x0.1) y solo se congela la rama de MRI (entrada siempre 0).
+# MODEL idéntico al de Docker/v18 para cargar los pesos con strict=True.
+MODEL:
+  MODEL_NAME: "MultimodalPCTUNet"
+  LOSS_FUNC: "multimodal_pct"
+  NUM_FILTERS: 24
+  NUM_CHANNELS: 1
+  TOPO_CHANNELS: 1
+  COORD_DIM: 3
+  KERNEL_D: 3
+  KERNEL_H: 3
+  KERNEL_W: 3
+  STRIDE_CONV: 1
+  STRIDE_POOL: 2
+  NUM_GROUPS: 8
+  L1_WEIGHT: 1.0
+  PROJ_WEIGHT: 0.1
+  GRAD_WEIGHT: 0.3
+  SSIM_WEIGHT: 0.2
+  SSIM_WINDOW_SIZE: 11
+  INTERPOLATION_MODE: "trilinear"
+
+TRAIN:
+  BATCH_SIZE: 4
+  LOG_INTERVAL: 50
+  RESUME: False          # Se sobrescribe vía --warm_start_expr en run_trainning.py
+  FINE_TUNE: True        # Solo carga pesos del modelo, no optimizer/scheduler/época
+  NUM_EPOCHS: 80
+  CHECKPOINT_PERIOD: 10
+
+  AMP: True
+  PATCH_TRAINING: True
+  PATCH_SIZE: [64, 128, 128]
+  PATCH_STRIDE: [20, 40, 40]   # Igual que Docker (solo se usa en inferencia con GridSampler)
+  BATCHES_PER_EPOCH: 150       # Docker: 500
+  VAL_PATCHES: 500            # ~4 exámenes de val por fold
+  VAL_EVERY_N_EPOCHS: 2
+  GRAD_SSIM_WARMUP_EPOCHS: 5
+  PATIENCE: 30
+
+DATA:
+  APPLY_AUGMENTATION: True
+  SIZES: [346, 391, 391]
+  TARGET_SIZE: [346, 391, 391]
+  VOXEL_SIZES: [2.0644, 2.0644, 2.0644]
+  RESIZE_MODE: "trilinear"
+
+  # Siempre solo PET: también los parches de BigMAC llegan sin MRI ni topograma.
+  MRI_DROPOUT_PROB: 1.0
+  MRI_DROPOUT_PROB_VAL: 1.0
+  TOPO_DROPOUT_PROB: 1.0
+  TOPO_DROPOUT_PROB_VAL: 1.0
+  TOPO_SHAPE: [512, 531]
+
+  # Coordenadas relativas al cuerpo (bbox desde NAC-PET): requiere utils/add_body_bbox.py
+  COORDS_MODE: "body"
+
+  # Fracción de parches de train que salen de BigMAC (--extra_train_dir); el resto, Utrecht.
+  EXTRA_TRAIN_FRAC: 0.3
+
+  # Muestreo dirigido de Utrecht: 40 % de los parches con el centro en la losa pulmonar y
+  # 40 % de sujetos menores de 13 años (son ~1/4 de cada fold).
+  THORAX_FRAC: 0.4
+  YOUNG_FRAC: 0.4
+  YOUNG_AGE: 13
+  PARTICIPANTS_CSV: "/mnt/d/Data/007_pseudoCT/utrecht_bigmac_space/participants.csv"
+  LUNG_CONTIGUOUS: True
+
+  # Flip izquierda-derecha (eje 0 del volumen).
+  FLIP_AXIS: 0
+
+  # 70 % de los parches de BigMAC con aspecto de NAC-PET de Utrecht (centro ~0.67x, cola del
+  # halo +50 %; rangos ajustados midiendo 25 exámenes de Utrecht y 10 de BigMAC).
+  PET_DOMAIN_PROB: 0.7
+  PET_DOMAIN_DARK: [0.3, 0.5]
+  PET_DOMAIN_DEPTH_MM: [30.0, 60.0]
+  PET_DOMAIN_RIM_MM: [20.0, 30.0]
+  PET_DOMAIN_HALO: [0.02, 0.05]
+  PET_DOMAIN_HALO_MM: [60.0, 100.0]
+
+DATA_LOADER:
+  NUM_WORKERS: 8
+  PIN_MEMORY: True
+
+OPTIMIZER:
+  OPTIMIZING_METHOD: "adamw"
+  BASE_LR: 5e-5          # decoder, FiLM y cross-attention (v20: 2e-5, se estancó en la época ~50)
+  WEIGHT_DECAY: 5e-5
+  LR_SCHEDULER: "cosineWarmRestarts"
+  ETA_MIN: 1e-7
+  T_ZERO: 80             # Un solo ciclo coseno en las 80 épocas
+  T_MULT: 1
+  FREEZE_PREFIXES: ["mri_"]          # rama de MRI: su entrada es siempre cero
+  LR_MULT_PREFIXES: ["pet_"]
+  LR_MULT_VALUES: [0.3]              # encoder de PET (v20: 0.1)
+
+NUM_GPUS: 1
+LOG_DIR: "/mnt/d/Data/007_pseudoCT/training/experiments"
+EXPR_NUM: "Multimodal_pCT_v23_utrecht_ft"
+RNG_SEED: 42

@@ -1,0 +1,67 @@
+MODEL:
+  MODEL_NAME: "MultimodalPCTUNet"
+  LOSS_FUNC: "multimodal_pct"
+  NUM_FILTERS: 24
+  NUM_CHANNELS: 1
+  TOPO_CHANNELS: 1
+  COORD_DIM: 3
+  KERNEL_D: 3
+  KERNEL_H: 3
+  KERNEL_W: 3
+  STRIDE_CONV: 1
+  STRIDE_POOL: 2
+  NUM_GROUPS: 8
+  L1_WEIGHT: 1.0
+  PROJ_WEIGHT: 0.1
+  GRAD_WEIGHT: 0.3
+  SSIM_WEIGHT: 0.2
+  SSIM_WINDOW_SIZE: 11
+  INTERPOLATION_MODE: "trilinear"
+
+TRAIN:
+  BATCH_SIZE: 4
+  LOG_INTERVAL: 50
+  RESUME: False          # Se sobrescribe vía --warm_start_expr en run_trainning.py
+  FINE_TUNE: True         # Solo carga pesos del modelo, no optimizer/scheduler/época
+  NUM_EPOCHS: 150         # Fase de fine-tuning, mucho más corta que el pretraining
+  CHECKPOINT_PERIOD: 10
+
+  AMP: True
+  PATCH_TRAINING: True
+  PATCH_SIZE: [64, 128, 128]
+  PATCH_STRIDE: [48, 96, 96]
+  BATCHES_PER_EPOCH: 150
+  VAL_PATCHES: 750
+  VAL_EVERY_N_EPOCHS: 2
+  GRAD_SSIM_WARMUP_EPOCHS: 10   # Warmup corto: ya partimos de un modelo convergido
+
+DATA:
+  APPLY_AUGMENTATION: True
+  SIZES: [346, 391, 391]
+  TARGET_SIZE: [346, 391, 391]
+  VOXEL_SIZES: [2.0644, 2.0644, 2.0644]
+  RESIZE_MODE: "trilinear"
+
+  # Núcleo del fine-tuning: la mitad de los pasos ven MRI en cero, para que el
+  # modelo aprenda a sintetizar CT solo con PET (caso pediátrico UMC Utrecht),
+  # sin perder calidad cuando el MRI sí está disponible (caso BigMAC).
+  MRI_DROPOUT_PROB: 0.5
+  MRI_DROPOUT_PROB_VAL: 0.5   # Val mixto: mitad con MRI, mitad sin, para monitorear ambos regímenes
+
+DATA_LOADER:
+  NUM_WORKERS: 12
+  PIN_MEMORY: True
+
+OPTIMIZER:
+  OPTIMIZING_METHOD: "adamw"
+  BASE_LR: 5e-5          # ~1/10 del LR de pretraining: ajuste fino, no reentrenar desde cero
+  WEIGHT_DECAY: 5e-5
+  LR_SCHEDULER: "cosineWarmRestarts"
+  ETA_MIN: 1e-6
+  T_ZERO: 20
+  T_MULT: 2
+
+NUM_GPUS: 1
+LOG_DIR: "/mnt/d/Data/007_pseudoCT/training/experiments"
+EXPR_NUM: "Multimodal_pCT_v17_mri_dropout_torso"
+RNG_SEED: 42

@@ -1,0 +1,77 @@
+# Fase A (Utrecht): fine-tuning del modelo enviado al challenge para funcionar sin MRI y sin topograma.
+# Base: mutimodal_docker.yaml (v12, MultimodalPCTUNet; pesos en checkpoints/Multimodal_pCT_v12_torso_Fold_k).
+# MODEL idéntico al de Docker para cargar los pesos con strict=True.
+MODEL:
+  MODEL_NAME: "MultimodalPCTUNet"
+  LOSS_FUNC: "multimodal_pct"
+  NUM_FILTERS: 24
+  NUM_CHANNELS: 1
+  TOPO_CHANNELS: 1
+  COORD_DIM: 3
+  KERNEL_D: 3
+  KERNEL_H: 3
+  KERNEL_W: 3
+  STRIDE_CONV: 1
+  STRIDE_POOL: 2
+  NUM_GROUPS: 8
+  L1_WEIGHT: 1.0
+  PROJ_WEIGHT: 0.1
+  GRAD_WEIGHT: 0.3
+  SSIM_WEIGHT: 0.2
+  SSIM_WINDOW_SIZE: 11
+  INTERPOLATION_MODE: "trilinear"
+
+TRAIN:
+  BATCH_SIZE: 4
+  LOG_INTERVAL: 50
+  RESUME: False          # Se sobrescribe vía --warm_start_expr en run_trainning.py
+  FINE_TUNE: True        # Solo carga pesos del modelo, no optimizer/scheduler/época
+  NUM_EPOCHS: 150        # Fase de fine-tuning, mucho más corta que el pretraining (Docker: 300)
+  CHECKPOINT_PERIOD: 10
+
+  AMP: True
+  PATCH_TRAINING: True
+  PATCH_SIZE: [64, 128, 128]
+  PATCH_STRIDE: [20, 40, 40]   # Igual que Docker (solo se usa en inferencia con GridSampler)
+  BATCHES_PER_EPOCH: 150       # Docker: 500
+  VAL_PATCHES: 750
+  VAL_EVERY_N_EPOCHS: 2
+  GRAD_SSIM_WARMUP_EPOCHS: 10  # Warmup corto: ya partimos de un modelo convergido
+
+DATA:
+  APPLY_AUGMENTATION: True
+  SIZES: [346, 391, 391]
+  TARGET_SIZE: [346, 391, 391]
+  VOXEL_SIZES: [2.0644, 2.0644, 2.0644]
+  RESIZE_MODE: "trilinear"
+
+  # La mitad de los parches ven MRI en cero, para que el modelo aprenda a
+  # sintetizar CT solo con PET (Utrecht) sin perder calidad con MRI (BigMAC).
+  MRI_DROPOUT_PROB: 0.5
+  MRI_DROPOUT_PROB_VAL: 0.5   # Val mixto: mitad con MRI, mitad sin, para monitorear ambos regímenes
+
+  # Utrecht no tiene scout: el modelo también debe funcionar sin topograma.
+  TOPO_DROPOUT_PROB: 0.3
+  TOPO_DROPOUT_PROB_VAL: 0.3
+  TOPO_SHAPE: [512, 531]
+
+  # Coordenadas relativas al cuerpo (bbox desde NAC-PET): requiere utils/add_body_bbox.py
+  COORDS_MODE: "body"
+
+DATA_LOADER:
+  NUM_WORKERS: 12
+  PIN_MEMORY: True
+
+OPTIMIZER:
+  OPTIMIZING_METHOD: "adamw"
+  BASE_LR: 5e-5          # 1/10 del LR de Docker (5e-4): ajuste fino, no reentrenar desde cero
+  WEIGHT_DECAY: 5e-5
+  LR_SCHEDULER: "cosineWarmRestarts"
+  ETA_MIN: 1e-6          # Docker: 5e-6
+  T_ZERO: 20             # Docker: 40 (ciclos más cortos para una fase de 150 épocas)
+  T_MULT: 2
+
+NUM_GPUS: 1
+LOG_DIR: "/mnt/d/Data/007_pseudoCT/training/experiments"
+EXPR_NUM: "Multimodal_pCT_v18_stageA_torso"
+RNG_SEED: 42
